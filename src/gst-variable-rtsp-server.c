@@ -5,7 +5,7 @@
  * Author: Pushpal Sidhu <psidhu@gateworks.com>
  * Created: Tue May 19 14:29:23 2015 (-0700)
  * Version: 1.0
- * Last-Updated: Mon Jun 22 15:49:07 2015 (-0700)
+ * Last-Updated: Mon Aug 31 16:22:25 2015 (-0700)
  *           By: Pushpal Sidhu
  *
  * Compatibility: ARCH=arm && proc=imx6
@@ -56,13 +56,13 @@
 #define DEFAULT_MOUNT_POINT     "/stream"
 #define DEFAULT_HOST            "127.0.0.1"
 #define DEFAULT_SRC_ELEMENT     "v4l2src"
-#define SINK_PIPELINE				\
+#define STATIC_SINK_PIPELINE			\
 	" imxipuvideotransform name=caps0 !"	\
 	" imxvpuenc_h264 name=enc0 !"		\
 	" rtph264pay name=pay0 pt=96"
 
 /* max number of chars. in a pipeline */
-#define LAUNCH_MAX 256
+#define LAUNCH_MAX 1024
 
 /**
  * imxvpuenc_h264:
@@ -96,7 +96,6 @@ struct stream_info {
 	gboolean connected;	      /* Flag to see if this is in use */
 	char *video_in;		      /* Video in device */
 	int config_interval;	      /* RTP Send Config Interval */
-	int fps;		      /* FPS of stream */
 	int capture_mode;	      /* Capture Mode of Camera */
 	int min_quant_lvl;	      /* Min Quant Level */
 	int max_quant_lvl;	      /* Max Quant Level */
@@ -316,7 +315,6 @@ int main (int argc, char *argv[])
 		.connected = FALSE,
 		.video_in = "/dev/video0",
 		.config_interval = atoi(DEFAULT_CONFIG_INTERVAL),
-		.fps = 30,
 		.min_quant_lvl = atoi(MIN_QUANT_LVL),
 		.max_quant_lvl = atoi(MAX_QUANT_LVL),
 		.curr_quant_lvl = atoi(CURR_QUANT_LVL),
@@ -327,6 +325,7 @@ int main (int argc, char *argv[])
 	char *port = (char *) DEFAULT_PORT;
 	char *mount_point = (char *) DEFAULT_MOUNT_POINT;
 	char *src_element = (char *) DEFAULT_SRC_ELEMENT;
+	char *caps_filter = NULL;
 	/* Launch pipeline shouldn't exceed LAUNCH_MAX bytes of characters */
 	char launch[LAUNCH_MAX];
 
@@ -336,7 +335,7 @@ int main (int argc, char *argv[])
 		{"version",          no_argument,       0, 'v'},
 		{"src_element",      required_argument, 0, 's'},
 		{"video_in",         required_argument, 0, 'i'},
-		{"framerate",        required_argument, 0, 'f'},
+		{"caps-filter",      required_argument, 0, 'f'},
 		{"bitrate",          required_argument, 0, 'b'},
 		{"max-quant-lvl",    required_argument, 0, 'g'},
 		{"min-quant-lvl",    required_argument, 0, 'l'},
@@ -356,7 +355,8 @@ int main (int argc, char *argv[])
 		"                         a 'device' property"
 		" (default: " DEFAULT_SRC_ELEMENT ")\n"
 		" --video_in,        -i - Input Device (default: /dev/video0)\n"
-		" --framerate,       -f - Framerate in fps (default: 30)\n"
+		" --caps-filter,     -f - Caps filter between src and"
+		" video transform (default: None)\n"
 		" --config-interval, -c - Interval to send rtp config"
 		" (default: 2s)\n"
 		" --bitrate,         -b - Min Bitrate in kbps"
@@ -400,8 +400,8 @@ int main (int argc, char *argv[])
 		case 'i': /* Video in parameter */
 			info.video_in = optarg;
 			break;
-		case 'f': /* FPS */
-			info.fps = atoi(optarg);
+		case 'f': /* caps filter */
+			caps_filter = optarg;
 			break;
 		case 'c': /* config-interval */
 			info.config_interval = atoi(optarg);
@@ -479,7 +479,11 @@ int main (int argc, char *argv[])
 	gst_rtsp_media_factory_set_shared(info.factory, TRUE);
 
 	/* Source Pipeline */
-	snprintf(launch, LAUNCH_MAX, "%s name=source0 !" SINK_PIPELINE, src_element);
+	snprintf(launch, LAUNCH_MAX, "%s name=source0 ! %s%s"
+		 STATIC_SINK_PIPELINE,
+		 src_element,
+		 (caps_filter) ? caps_filter : "",
+		 (caps_filter) ? " ! " : "");
 	g_print("Pipeline set to: %s...\n", launch);
 	gst_rtsp_media_factory_set_launch(info.factory, launch);
 

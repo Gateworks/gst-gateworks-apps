@@ -5,7 +5,7 @@
  * Author: Pushpal Sidhu <psidhu@gateworks.com>
  * Created: Tue May 19 14:29:23 2015 (-0700)
  * Version: 1.0
- * Last-Updated: Mon Aug 31 16:22:25 2015 (-0700)
+ * Last-Updated: Mon Aug 31 16:49:51 2015 (-0700)
  *           By: Pushpal Sidhu
  *
  * Compatibility: ARCH=arm && proc=imx6
@@ -326,6 +326,7 @@ int main (int argc, char *argv[])
 	char *mount_point = (char *) DEFAULT_MOUNT_POINT;
 	char *src_element = (char *) DEFAULT_SRC_ELEMENT;
 	char *caps_filter = NULL;
+	char *user_pipeline = NULL;
 	/* Launch pipeline shouldn't exceed LAUNCH_MAX bytes of characters */
 	char launch[LAUNCH_MAX];
 
@@ -333,30 +334,38 @@ int main (int argc, char *argv[])
 	const struct option long_opts[] = {
 		{"help",             no_argument,       0, '?'},
 		{"version",          no_argument,       0, 'v'},
-		{"src_element",      required_argument, 0, 's'},
-		{"video_in",         required_argument, 0, 'i'},
+		{"mount-point",      required_argument, 0, 'm'},
+		{"port",             required_argument, 0, 'p'},
+		{"user-pipeline",    required_argument, 0, 'u'},
+		{"src-element",      required_argument, 0, 's'},
+		{"video-in",         required_argument, 0, 'i'},
 		{"caps-filter",      required_argument, 0, 'f'},
 		{"bitrate",          required_argument, 0, 'b'},
 		{"max-quant-lvl",    required_argument, 0, 'g'},
 		{"min-quant-lvl",    required_argument, 0, 'l'},
 		{"config-interval",  required_argument, 0, 'c'},
-		{"mount-point",      required_argument, 0, 'm'},
-		{"port",             required_argument, 0, 'p'},
 		{"msg-rate",         required_argument, 0, 'r'},
 		{ /* Sentinel */ }
 	};
-	char *arg_parse = "?hvs:i:f:b:g:l:c:m:p:r:";
+	char *arg_parse = "?hvm:p:u:s:i:f:b:g:l:c:r:";
 	const char *usage =
 		"Usage: gst-variable-rtsp-server [OPTIONS]\n\n"
 		"Options:\n"
 		" --help,            -? - This usage\n"
 		" --version,         -v - Program Version: " VERSION "\n"
-		" --src_element,     -s - Gstreamer source element. Must have\n"
+		" --mount-point,     -m - What URI to mount"
+		" (default: " DEFAULT_MOUNT_POINT ")\n"
+		" --port,            -p - Port to sink on"
+		" (default: " DEFAULT_PORT ")\n"
+		" --user-pipeline,   -u - User supplied pipeline. Note the\n"
+		"                         below options are NO LONGER\n"
+		"                         applicable.\n"
+		" --src-element,     -s - Gstreamer source element. Must have\n"
 		"                         a 'device' property"
 		" (default: " DEFAULT_SRC_ELEMENT ")\n"
-		" --video_in,        -i - Input Device (default: /dev/video0)\n"
-		" --caps-filter,     -f - Caps filter between src and"
-		" video transform (default: None)\n"
+		" --video-in,        -i - Input Device (default: /dev/video0)\n"
+		" --caps-filter,     -f - Caps filter between src and\n"
+		"                         video transform (default: None)\n"
 		" --config-interval, -c - Interval to send rtp config"
 		" (default: 2s)\n"
 		" --bitrate,         -b - Min Bitrate in kbps"
@@ -365,12 +374,15 @@ int main (int argc, char *argv[])
 		" (default: " MAX_QUANT_LVL ")\n"
 		" --min-quant-lvl,   -l - Min Quant-Level"
 		" (default: " MIN_QUANT_LVL ")\n"
-		" --mount-point,     -m - What URI to mount"
-		" (default: " DEFAULT_MOUNT_POINT ")\n"
-		" --port,            -p - Port to sink on"
-		" (default: " DEFAULT_PORT ")\n"
 		" --msg-rate,        -r - Rate of messages displayed"
-		" (default: 5s)\n"
+		" (default: 5s)\n\n"
+		"Examples:\n"
+		" 1. Capture using imxv4l2videosrc, changes quality:\n"
+		"\tgst-variable-rtsp-server -s imxv4l2videosrc\n"
+		"\n"
+		" 2. Create RTSP server out of user created pipeline:\n"
+		"\tgst-variable-rtsp-server -u \"videotestsrc ! imxvpuenc_h264"
+		" ! rtph264pay pt=96\""
 		;
 
 	/* Init GStreamer */
@@ -394,6 +406,15 @@ int main (int argc, char *argv[])
 		case 'v': /* Version */
 			puts("Program Version: " VERSION);
 			return ECODE_OKAY;
+		case 'm': /* Mount Point */
+			mount_point = optarg;
+			break;
+		case 'p': /* Port */
+			port = optarg;
+			break;
+		case 'u': /* User Pipeline*/
+			user_pipeline = optarg;
+			break;
 		case 's': /* Video source element */
 			src_element = optarg;
 			break;
@@ -438,12 +459,6 @@ int main (int argc, char *argv[])
 			}
 			info.curr_quant_lvl = info.min_quant_lvl;
 			break;
-		case 'm': /* Mount Point */
-			mount_point = optarg;
-			break;
-		case 'p': /* Port */
-			port = optarg;
-			break;
 		case 'r': /* how often to display messages at */
 			info.msg_rate = atoi(optarg);
 			break;
@@ -479,11 +494,14 @@ int main (int argc, char *argv[])
 	gst_rtsp_media_factory_set_shared(info.factory, TRUE);
 
 	/* Source Pipeline */
-	snprintf(launch, LAUNCH_MAX, "%s name=source0 ! %s%s"
-		 STATIC_SINK_PIPELINE,
-		 src_element,
-		 (caps_filter) ? caps_filter : "",
-		 (caps_filter) ? " ! " : "");
+	if (user_pipeline)
+		snprintf(launch, LAUNCH_MAX, "( %s )", user_pipeline);
+	else
+		snprintf(launch, LAUNCH_MAX, "%s name=source0 ! %s%s"
+			 STATIC_SINK_PIPELINE,
+			 src_element,
+			 (caps_filter) ? caps_filter : "",
+			 (caps_filter) ? " ! " : "");
 	g_print("Pipeline set to: %s...\n", launch);
 	gst_rtsp_media_factory_set_launch(info.factory, launch);
 
@@ -503,8 +521,9 @@ int main (int argc, char *argv[])
 
 	/* Configure Callbacks */
 	/* Create new client handler (Called on new client connect) */
-	g_signal_connect(info.server, "client-connected",
-			 G_CALLBACK(new_client_handler), &info);
+	if (!user_pipeline)
+		g_signal_connect(info.server, "client-connected",
+				 G_CALLBACK(new_client_handler), &info);
 
 	/* Run GBLIB main loop until it returns */
 	g_print("Stream ready at rtsp://" DEFAULT_HOST ":%s%s\n",

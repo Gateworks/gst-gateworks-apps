@@ -5,7 +5,7 @@
  * Author: Pushpal Sidhu <psidhu@gateworks.com>
  * Created: Tue May 19 14:29:23 2015 (-0700)
  * Version: 1.0
- * Last-Updated: Mon Aug 31 16:49:51 2015 (-0700)
+ * Last-Updated: Tue Sep  1 12:25:10 2015 (-0700)
  *           By: Pushpal Sidhu
  *
  * Compatibility: ARCH=arm && proc=imx6
@@ -28,7 +28,7 @@
  */
 
 #ifndef VERSION
-#define VERSION "1.0"
+#define VERSION "1.1"
 #endif
 
 #include <ecode.h>
@@ -45,6 +45,8 @@
 /**
  * gstreamer rtph264pay:
  *  - config-interval: SPS and PPS Insertion Interval
+ * h264:
+ *  - idr_interval - interval between IDR frames
  * rtsp-server:
  *  - port: Server port
  *  - mount_point: Server mount point
@@ -53,6 +55,7 @@
  *  - sink pipeline: Static pipeline to take source to rtsp server
  */
 #define DEFAULT_CONFIG_INTERVAL "2"
+#define DEFAULT_IDR_INTERVAL    "0"
 #define DEFAULT_PORT            "9099"
 #define DEFAULT_MOUNT_POINT     "/stream"
 #define DEFAULT_HOST            "127.0.0.1"
@@ -74,6 +77,9 @@
  *                 Please note that '0' is the 'best' quality.
  */
 #define MIN_BR  "0"	     /* The min value "bitrate" to (0 = VBR)*/
+#define MAX_BR  "4294967295" /* Max as defined by imxvpuenc_h264 */
+#define CURR_BR "10000"      /* Default to 10mbit/s */
+
 #define MIN_QUANT_LVL  "0"   /* Minimum quant-param for h264 */
 #define MAX_QUANT_LVL  "51"  /* Maximum quant-param for h264 */
 #define CURR_QUANT_LVL MIN_QUANT_LVL
@@ -86,7 +92,7 @@ enum {pipeline=0, source, caps, encoder, protocol, sink};
 #define NUM_ELEM (source + sink)
 
 struct stream_info {
-	int num_cli;		      /* Number of clients */
+	gint num_cli;		      /* Number of clients */
 	GMainLoop *main_loop;	      /* Main loop pointer */
 	GstRTSPServer *server;	      /* RTSP Server */
 	GstRTSPServer *client;	      /* RTSP Client */
@@ -95,14 +101,16 @@ struct stream_info {
 	GstRTSPMedia *media;	      /* RTSP Media */
 	GstElement **stream;	      /* Array of elements */
 	gboolean connected;	      /* Flag to see if this is in use */
-	char *video_in;		      /* Video in device */
-	int config_interval;	      /* RTP Send Config Interval */
-	int capture_mode;	      /* Capture Mode of Camera */
-	int min_quant_lvl;	      /* Min Quant Level */
-	int max_quant_lvl;	      /* Max Quant Level */
-	int curr_quant_lvl;	      /* Current Quant Level */
-	int bitrate;		      /* Bitrate */
-	int msg_rate;		      /* In Seconds */
+	gchar *video_in;	      /* Video in device */
+	gint config_interval;	      /* RTP Send Config Interval */
+	gint idr;		      /* Interval betweeen IDR frames */
+	gint min_quant_lvl;	      /* Min Quant Level */
+	gint max_quant_lvl;	      /* Max Quant Level */
+	gint curr_quant_lvl;	      /* Current Quant Level */
+	gint min_bitrate;	      /* Min Bitrate */
+	gint max_bitrate;	      /* Max Bitrate */
+	gint curr_bitrate;	      /* Current Bitrate */
+	gint msg_rate;		      /* In Seconds */
 };
 
 /* Global Variables */
@@ -127,9 +135,6 @@ static gboolean periodic_msg_handler(struct stream_info *si)
 	if (si->connected == FALSE)
 		return FALSE;
 
-	g_object_get(G_OBJECT(si->stream[encoder]), "quant-param",
-		     &si->curr_quant_lvl, NULL);
-
 	if (si->msg_rate > 0) {
 		GstStructure *stats;
 
@@ -139,9 +144,12 @@ static gboolean periodic_msg_handler(struct stream_info *si)
 		g_print("### MSG BLOCK ###\n");
 		g_print("Number of Clients    : %d\n", si->num_cli);
 		g_print("Current Quant Level  : %d\n", si->curr_quant_lvl);
-		g_print("Current Bitrate Level: %d\n", si->bitrate);
-		g_print("RTSP Stats           : %s\n",
-			gst_structure_to_string(stats));
+		g_print("Current Bitrate Level: %d\n", si->curr_bitrate);
+
+		if (stats)
+			g_print("RTSP Stats           : %s\n",
+				gst_structure_to_string(stats));
+
 		g_print("\n");
 	}
 
@@ -180,12 +188,12 @@ static void media_configure_handler(GstRTSPMediaFactory *factory,
 	g_object_set(si->stream[source], "device", si->video_in, NULL);
 
 	/* Modify imxvpuenc_h264 Properties */
-	g_print("Setting encoder bitrate=%d\n", si->bitrate);
-	g_object_set(si->stream[encoder], "bitrate", si->bitrate, NULL);
+	g_print("Setting encoder bitrate=%d\n", si->curr_bitrate);
+	g_object_set(si->stream[encoder], "bitrate", si->curr_bitrate, NULL);
 	g_print("Setting encoder quant-param=%d\n", si->curr_quant_lvl);
 	g_object_set(si->stream[encoder], "quant-param", si->curr_quant_lvl,
 		     NULL);
-	g_object_set(si->stream[encoder], "idr-interval", -1, NULL);
+	g_object_set(si->stream[encoder], "idr-interval", si->idr, NULL);
 
 	/* Modify rtph264pay Properties */
 	g_print("Setting rtp config-interval=%d\n",(int) si->config_interval);
@@ -199,17 +207,13 @@ static void media_configure_handler(GstRTSPMediaFactory *factory,
 }
 
 /**
- * change_quality
+ * change_quant
  * handle changing of quant-levels
  */
-static void change_quality(struct stream_info *si)
+static void change_quant(struct stream_info *si)
 {
-	/* Don't change quant if bitrate is constant (CBR) */
-	if (si->bitrate != 0)
-		return;
-
 	/* Change quant-level depending on # of clients connected */
-	int c = si->curr_quant_lvl;
+	gint c = si->curr_quant_lvl;
 
 	enum {h=1, mh, m, ml, l}; /* Quality indicators */
 
@@ -256,6 +260,28 @@ static void change_quality(struct stream_info *si)
 }
 
 /**
+ * change_bitrate
+ * handle changing of bitrates
+ */
+static void change_bitrate(struct stream_info *si)
+{
+	/* Change quant-level depending on # of clients connected */
+	int c = si->curr_bitrate;
+
+	/* Change based on # of clients connected from current */
+	si->curr_bitrate = si->max_bitrate / si->num_cli;
+
+	/* Cap to MIN bitrate levels */
+	if (si->curr_bitrate < si->min_bitrate)
+		si->curr_bitrate = si->min_bitrate;
+
+	g_print("[%d]Changing bitrate from %d to %d\n", si->num_cli, c,
+		si->curr_bitrate);
+	g_object_set(si->stream[encoder], "bitrate", si->curr_bitrate,
+		     NULL);
+}
+
+/**
  * client_close_handler
  * This is called upon a client leaving. Free's stream data (if last client),
  * decrements a count, free's client resources.
@@ -282,8 +308,12 @@ static void client_close_handler(GstRTSPClient *client, struct stream_info *si)
 		}
 		/* Created when first new client connected */
 		free(si->stream);
-	} else
-		change_quality(si);
+	} else {
+		if (si->curr_bitrate)
+			change_bitrate(si);
+		else
+			change_quant(si);
+	}
 }
 
 /**
@@ -314,8 +344,12 @@ static void new_client_handler(GstRTSPServer *server, GstRTSPClient *client,
 			g_signal_connect(si->factory, "media-configure",
 					 G_CALLBACK(media_configure_handler),
 					 si);
-	} else
-		change_quality(si);
+	} else {
+		if (si->curr_bitrate)
+			change_bitrate(si);
+		else
+			change_quant(si);
+	}
 
 	/* Create new client_close_handler */
 	g_signal_connect(client, "closed",
@@ -333,10 +367,13 @@ int main (int argc, char *argv[])
 		.connected = FALSE,
 		.video_in = "/dev/video0",
 		.config_interval = atoi(DEFAULT_CONFIG_INTERVAL),
+		.idr = atoi(DEFAULT_IDR_INTERVAL),
 		.min_quant_lvl = atoi(MIN_QUANT_LVL),
 		.max_quant_lvl = atoi(MAX_QUANT_LVL),
 		.curr_quant_lvl = atoi(CURR_QUANT_LVL),
-		.bitrate = atoi(MIN_BR),
+		.min_bitrate = atoi(MIN_BR),
+		.max_bitrate = atoi(CURR_BR),
+		.curr_bitrate = atoi(CURR_BR),
 		.msg_rate = 5,
 	};
 
@@ -359,14 +396,16 @@ int main (int argc, char *argv[])
 		{"src-element",      required_argument, 0, 's'},
 		{"video-in",         required_argument, 0, 'i'},
 		{"caps-filter",      required_argument, 0, 'f'},
+		{"min-bitrate",      required_argument, 0,  0 },
 		{"bitrate",          required_argument, 0, 'b'},
-		{"max-quant-lvl",    required_argument, 0, 'g'},
+		{"max-quant-lvl",    required_argument, 0,  0 },
 		{"min-quant-lvl",    required_argument, 0, 'l'},
 		{"config-interval",  required_argument, 0, 'c'},
+		{"idr",              required_argument, 0, 'a'},
 		{"msg-rate",         required_argument, 0, 'r'},
 		{ /* Sentinel */ }
 	};
-	char *arg_parse = "?hvm:p:u:s:i:f:b:g:l:c:r:";
+	char *arg_parse = "?hvd:m:p:u:s:i:f:b:l:c:a:r:";
 	const char *usage =
 		"Usage: gst-variable-rtsp-server [OPTIONS]\n\n"
 		"Options:\n"
@@ -386,14 +425,18 @@ int main (int argc, char *argv[])
 		" --video-in,        -i - Input Device (default: /dev/video0)\n"
 		" --caps-filter,     -f - Caps filter between src and\n"
 		"                         video transform (default: None)\n"
-		" --config-interval, -c - Interval to send rtp config"
-		" (default: 2s)\n"
-		" --bitrate,         -b - Min Bitrate in kbps"
+		" --max-bitrate,     -b - Max allowable bitrate"
+		" (default: " CURR_BR ")\n"
+		" --min-bitrate,        - Min allowable bitrate"
 		" (default: " MIN_BR ")\n"
-		" --max-quant-lvl,   -g - Max Quant-Level"
+		" --max-quant-lvl,      - Max Quant-Level"
 		" (default: " MAX_QUANT_LVL ")\n"
 		" --min-quant-lvl,   -l - Min Quant-Level"
 		" (default: " MIN_QUANT_LVL ")\n"
+		" --config-interval, -c - Interval to send rtp config"
+		" (default: 2s)\n"
+		" --idr              -a - Interval between IDR Frames"
+		" (default: " DEFAULT_IDR_INTERVAL ")\n"
 		" --msg-rate,        -r - Rate of messages displayed"
 		" (default: 5s)\n\n"
 		"Examples:\n"
@@ -402,7 +445,7 @@ int main (int argc, char *argv[])
 		"\n"
 		" 2. Create RTSP server out of user created pipeline:\n"
 		"\tgst-variable-rtsp-server -u \"videotestsrc ! imxvpuenc_h264"
-		" ! rtph264pay pt=96\""
+		" ! rtph264pay pt=96\"\n"
 		;
 
 	/* Init GStreamer */
@@ -417,7 +460,40 @@ int main (int argc, char *argv[])
 			break;
 
 		switch (c) {
-		case 0:
+		case 0: /* Min Bitrate; Max Quant level require longer parsing */
+			if (strcmp(long_opts[opt_ndx].name,
+				   "min-bitrate") == 0) {
+				info.min_bitrate = atoi(optarg);
+				if (info.min_bitrate > atoi(MAX_BR)) {
+					g_print("Maximum bitrate is "
+						MAX_BR ".\n");
+					info.min_bitrate = atoi(MAX_BR);
+				} else if (info.min_bitrate < atoi(MIN_BR)) {
+					g_print("Minimum bitrate is "
+						MIN_BR ".\n");
+					info.min_bitrate = atoi(MIN_BR);
+				}
+			} else if (strcmp(long_opts[opt_ndx].name,
+					  "max-quant-lvl") == 0) {
+				info.max_quant_lvl = atoi(optarg);
+				if (info.max_quant_lvl > atoi(MAX_QUANT_LVL)) {
+					g_print("Maximum quant-lvl is "
+						MAX_QUANT_LVL
+						".\n");
+					info.max_quant_lvl =
+						atoi(MAX_QUANT_LVL);
+				} else if (info.max_quant_lvl <
+					   atoi(MIN_QUANT_LVL)) {
+					g_print("Minimum quant-lvl is "
+						MIN_QUANT_LVL
+						".\n");
+					info.max_quant_lvl =
+						atoi(MIN_QUANT_LVL);
+				}
+			} else {
+				puts(usage);
+				return -ECODE_ARGS;
+			}
 			break;
 		case 'h': /* Help */
 		case '?':
@@ -447,29 +523,19 @@ int main (int argc, char *argv[])
 		case 'f': /* caps filter */
 			caps_filter = optarg;
 			break;
-		case 'c': /* config-interval */
-			info.config_interval = atoi(optarg);
-			break;
-		case 'b': /* Bitrate */
-			info.bitrate = atoi(optarg);
-			if (info.bitrate < atoi(MIN_BR)) {
+		case 'b': /* Max Bitrate */
+			info.max_bitrate = atoi(optarg);
+			if (info.max_bitrate > atoi(MAX_BR)) {
+				g_print("Maximum bitrate is " MAX_BR ".\n");
+				info.max_bitrate = atoi(MAX_BR);
+			} else if (info.max_bitrate < atoi(MIN_BR)) {
 				g_print("Minimum bitrate is " MIN_BR ".\n");
-				info.bitrate = atoi(MIN_BR);
+				info.max_bitrate = atoi(MIN_BR);
 			}
+
+			info.curr_bitrate = info.max_bitrate;
 			break;
-		case 'g': /* Max Quant Level */
-			info.max_quant_lvl = atoi(optarg);
-			if (info.max_quant_lvl > atoi(MAX_QUANT_LVL)) {
-				g_print("Maximum quant-lvl is " MAX_QUANT_LVL
-					".\n");
-				info.max_quant_lvl = atoi(MAX_QUANT_LVL);
-			} else if (info.max_quant_lvl < atoi(MIN_QUANT_LVL)) {
-				g_print("Minimum quant-lvl is " MIN_QUANT_LVL
-					".\n");
-				info.max_quant_lvl = atoi(MIN_QUANT_LVL);
-			}
-			break;
-		case 'l': /* Min Quant Level */
+		case 'l':
 			info.min_quant_lvl = atoi(optarg);
 			if (info.min_quant_lvl > atoi(MAX_QUANT_LVL)) {
 				g_print("Maximum quant-lvl is " MAX_QUANT_LVL
@@ -480,7 +546,14 @@ int main (int argc, char *argv[])
 					".\n");
 				info.min_quant_lvl = atoi(MIN_QUANT_LVL);
 			}
+
 			info.curr_quant_lvl = info.min_quant_lvl;
+			break;
+		case 'c': /* config-interval */
+			info.config_interval = atoi(optarg);
+			break;
+		case 'a': /* idr frame interval */
+			info.idr = atoi(optarg);
 			break;
 		case 'r': /* how often to display messages at */
 			info.msg_rate = atoi(optarg);
@@ -495,6 +568,11 @@ int main (int argc, char *argv[])
 	if (info.max_quant_lvl < info.min_quant_lvl) {
 		g_printerr("Max Quant level must be"
 			   "greater than Min Quant level\n");
+		return -ECODE_ARGS;
+	}
+
+	if (info.max_bitrate < info.min_bitrate) {
+		g_printerr("Max bitrate must be greater min than bitrate\n");
 		return -ECODE_ARGS;
 	}
 

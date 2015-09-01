@@ -35,6 +35,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <getopt.h>
 
 #include <gst/gst.h>
@@ -103,6 +104,23 @@ struct stream_info {
 	int bitrate;		      /* Bitrate */
 	int msg_rate;		      /* In Seconds */
 };
+
+/* Global Variables */
+static unsigned int g_dbg = 0;
+
+#define dbg(lvl, fmt, ...) _dbg (__func__, __LINE__, lvl, fmt, ##__VA_ARGS__)
+void _dbg(const char *func, unsigned int line,
+	   unsigned int lvl, const char *fmt, ...)
+{
+	if (g_dbg >= lvl) {
+		va_list ap;
+		printf("[%d]:%s:%d - ", lvl, func, line);
+		va_start(ap, fmt);
+		vprintf(fmt, ap);
+		fflush(stdout);
+		va_end(ap);
+	}
+}
 
 static gboolean periodic_msg_handler(struct stream_info *si)
 {
@@ -334,6 +352,7 @@ int main (int argc, char *argv[])
 	const struct option long_opts[] = {
 		{"help",             no_argument,       0, '?'},
 		{"version",          no_argument,       0, 'v'},
+		{"debug",            required_argument, 0, 'd'},
 		{"mount-point",      required_argument, 0, 'm'},
 		{"port",             required_argument, 0, 'p'},
 		{"user-pipeline",    required_argument, 0, 'u'},
@@ -353,6 +372,7 @@ int main (int argc, char *argv[])
 		"Options:\n"
 		" --help,            -? - This usage\n"
 		" --version,         -v - Program Version: " VERSION "\n"
+		" --debug,           -d - Debug Level (default: 0)\n"
 		" --mount-point,     -m - What URI to mount"
 		" (default: " DEFAULT_MOUNT_POINT ")\n"
 		" --port,            -p - Port to sink on"
@@ -406,6 +426,9 @@ int main (int argc, char *argv[])
 		case 'v': /* Version */
 			puts("Program Version: " VERSION);
 			return ECODE_OKAY;
+		case 'd':
+			g_dbg = atoi(optarg);
+			break;
 		case 'm': /* Mount Point */
 			mount_point = optarg;
 			break;

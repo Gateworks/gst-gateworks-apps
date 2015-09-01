@@ -5,7 +5,7 @@
  * Author: Pushpal Sidhu <psidhu@gateworks.com>
  * Created: Tue May 19 14:29:23 2015 (-0700)
  * Version: 1.0
- * Last-Updated: Tue Sep  1 12:51:30 2015 (-0700)
+ * Last-Updated: Tue Sep  1 13:47:40 2015 (-0700)
  *           By: Pushpal Sidhu
  *
  * Compatibility: ARCH=arm && proc=imx6
@@ -141,18 +141,18 @@ static gboolean periodic_msg_handler(struct stream_info *si)
 
 	if (si->msg_rate > 0) {
 		GstStructure *stats;
-
-		g_object_get(G_OBJECT(si->stream[protocol]), "stats", &stats,
-			     NULL);
-
 		g_print("### MSG BLOCK ###\n");
 		g_print("Number of Clients    : %d\n", si->num_cli);
 		g_print("Current Quant Level  : %d\n", si->curr_quant_lvl);
 		g_print("Current Bitrate Level: %d\n", si->curr_bitrate);
 
-		if (stats)
-			g_print("RTSP Stats           : %s\n",
+		g_object_get(G_OBJECT(si->stream[protocol]), "stats", &stats,
+			     NULL);
+		if (stats) {
+			g_print("General RTSP Stats   : %s\n",
 				gst_structure_to_string(stats));
+			gst_structure_free (stats);
+		}
 
 		g_print("\n");
 	} else {
@@ -171,6 +171,8 @@ static void media_configure_handler(GstRTSPMediaFactory *factory,
 				    GstRTSPMedia *media, struct stream_info *si)
 {
 	dbg(4, "called\n");
+
+	si->media = media;
 
 	g_print("[%d]Configuring pipeline...\n", si->num_cli);
 
@@ -209,11 +211,12 @@ static void media_configure_handler(GstRTSPMediaFactory *factory,
 	g_object_set(si->stream[protocol], "config-interval",
 		     si->config_interval, NULL);
 
-	if (si->num_cli == 1)
+	if (si->num_cli == 1) {
 		/* Create Msg Event Handler */
 		dbg(2, "Creating 'periodic message' handler\n");
 		g_timeout_add(si->msg_rate * 1000,
 			      (GSourceFunc)periodic_msg_handler, si);
+	}
 }
 
 /**

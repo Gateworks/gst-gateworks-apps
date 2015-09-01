@@ -46,16 +46,33 @@ As of this writing, the usage is as follows:
 
 ```
 Usage: gst-variable-rtsp-server [OPTIONS]
-Options
+
+Options:
  --help,            -? - This usage
- --version,         -v - Program Version: 1.0
- --video_in,        -i - Input Device (default: /dev/video0)
- --framerate,       -f - Framerate in fps (default: 30)
- --config-interval, -s - Interval to send rtp config (default: 2s)
- --bitrate,         -b - Min Bitrate in kbps (default: 0)
- --max-quant-lvl,   -g - Max Quant-Level (default: 51)
- --min-quant-lvl,   -l - Min Quant-Level (default: 0)
+ --version,         -v - Program Version: 1.1
+ --debug,           -d - Debug Level (default: 0)
  --mount-point,     -m - What URI to mount (default: /stream)
  --port,            -p - Port to sink on (default: 9099)
+ --user-pipeline,   -u - User supplied pipeline. Note the
+                         below options are NO LONGER
+                         applicable.
+ --src-element,     -s - Gstreamer source element. Must have
+                         a 'device' property (default: v4l2src)
+ --video-in,        -i - Input Device (default: /dev/video0)
+ --caps-filter,     -f - Caps filter between src and
+                         video transform (default: None)
+ --max-bitrate,     -b - Max allowable bitrate (default: 10000)
+ --min-bitrate,        - Min allowable bitrate (default: 0)
+ --max-quant-lvl,      - Max Quant-Level (default: 51)
+ --min-quant-lvl,   -l - Min Quant-Level (default: 0)
+ --config-interval, -c - Interval to send rtp config (default: 2s)
+ --idr              -a - Interval between IDR Frames (default: 0)
  --msg-rate,        -r - Rate of messages displayed (default: 5s)
+
+Examples:
+ 1. Capture using imxv4l2videosrc, changes quality:
+        gst-variable-rtsp-server -s imxv4l2videosrc
+
+ 2. Create RTSP server out of user created pipeline:
+        gst-variable-rtsp-server -u "videotestsrc ! imxvpuenc_h264 ! rtph264pay pt=96"
 ```

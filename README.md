@@ -74,5 +74,5 @@ Examples:
         gst-variable-rtsp-server -s imxv4l2videosrc
 
  2. Create RTSP server out of user created pipeline:
-        gst-variable-rtsp-server -u "videotestsrc ! imxvpuenc_h264 ! rtph264pay pt=96"
+        gst-variable-rtsp-server -u "videotestsrc ! imxvpuenc_h264 ! rtph264pay name=pay0 pt=96"
 ```

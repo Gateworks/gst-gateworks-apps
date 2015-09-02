@@ -5,7 +5,7 @@
  * Author: Pushpal Sidhu <psidhu@gateworks.com>
  * Created: Tue May 19 14:29:23 2015 (-0700)
  * Version: 1.0
- * Last-Updated: Tue Sep  1 13:47:40 2015 (-0700)
+ * Last-Updated: Wed Sep  2 15:52:08 2015 (-0700)
  *           By: Pushpal Sidhu
  *
  * Compatibility: ARCH=arm && proc=imx6
@@ -477,7 +477,7 @@ int main (int argc, char *argv[])
 		"\n"
 		" 2. Create RTSP server out of user created pipeline:\n"
 		"\tgst-variable-rtsp-server -u \"videotestsrc ! imxvpuenc_h264"
-		" ! rtph264pay pt=96\"\n"
+		" ! rtph264pay name=pay0 pt=96\"\n"
 		;
 
 	/* Init GStreamer */

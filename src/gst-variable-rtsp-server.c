@@ -5,7 +5,7 @@
  * Author: Pushpal Sidhu <psidhu@gateworks.com>
  * Created: Tue May 19 14:29:23 2015 (-0700)
  * Version: 1.0
- * Last-Updated: Wed Sep  2 15:52:08 2015 (-0700)
+ * Last-Updated: Thu Oct  1 08:59:31 2015 (-0700)
  *           By: Pushpal Sidhu
  *
  * Compatibility: ARCH=arm && proc=imx6
@@ -66,7 +66,7 @@
 	" rtph264pay name=pay0 pt=96"
 
 /* max number of chars. in a pipeline */
-#define LAUNCH_MAX 1024
+#define LAUNCH_MAX 8192
 
 /**
  * imxvpuenc_h264:
@@ -370,7 +370,7 @@ static void new_client_handler(GstRTSPServer *server, GstRTSPClient *client,
 		 * upon the first connection and is never destroyed after that.
 		 */
 		if (first_run == TRUE) {
-			dbg(2, "Configureing 'media-configure' signal handler\n");
+			dbg(2, "Creating 'media-configure' signal handler\n");
 			g_signal_connect(si->factory, "media-configure",
 					 G_CALLBACK(media_configure_handler),
 					 si);

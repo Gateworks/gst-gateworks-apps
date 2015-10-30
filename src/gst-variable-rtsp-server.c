@@ -5,7 +5,7 @@
  * Author: Pushpal Sidhu <psidhu@gateworks.com>
  * Created: Tue May 19 14:29:23 2015 (-0700)
  * Version: 1.0
- * Last-Updated: Thu Oct  1 08:59:31 2015 (-0700)
+ * Last-Updated: Thu Oct  8 14:10:24 2015 (-0700)
  *           By: Pushpal Sidhu
  *
  * Compatibility: ARCH=arm && proc=imx6
@@ -28,7 +28,7 @@
  */
 
 #ifndef VERSION
-#define VERSION "1.1"
+#define VERSION "1.2"
 #endif
 
 #include <ecode.h>
@@ -118,7 +118,7 @@ static unsigned int g_dbg = 0;
 
 #define dbg(lvl, fmt, ...) _dbg (__func__, __LINE__, lvl, fmt, ##__VA_ARGS__)
 void _dbg(const char *func, unsigned int line,
-	   unsigned int lvl, const char *fmt, ...)
+	  unsigned int lvl, const char *fmt, ...)
 {
 	if (g_dbg >= lvl) {
 		va_list ap;

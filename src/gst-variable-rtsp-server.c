@@ -5,7 +5,7 @@
  * Author: Pushpal Sidhu <psidhu@gateworks.com>
  * Created: Tue May 19 14:29:23 2015 (-0700)
  * Version: 1.0
- * Last-Updated: Fri Jan 15 12:57:12 2016 (-0800)
+ * Last-Updated: Fri Jan 15 14:22:59 2016 (-0800)
  *           By: Pushpal Sidhu
  *
  * Compatibility: ARCH=arm && proc=imx6
@@ -376,7 +376,7 @@ int main (int argc, char *argv[])
 		.video_in = "/dev/video0",
 		.config_interval = atoi(DEFAULT_CONFIG_INTERVAL),
 		.idr = atoi(DEFAULT_IDR_INTERVAL),
-		.steps = atoi(DEFAULT_STEPS),
+		.steps = atoi(DEFAULT_STEPS) - 1,
 		.min_quant_lvl = atoi(MIN_QUANT_LVL),
 		.max_quant_lvl = atoi(MAX_QUANT_LVL),
 		.curr_quant_lvl = atoi(CURR_QUANT_LVL),

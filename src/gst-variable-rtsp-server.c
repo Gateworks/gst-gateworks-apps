@@ -5,7 +5,7 @@
  * Author: Pushpal Sidhu <psidhu@gateworks.com>
  * Created: Tue May 19 14:29:23 2015 (-0700)
  * Version: 1.0
- * Last-Updated: Thu Oct  8 14:10:24 2015 (-0700)
+ * Last-Updated: Fri Jan 15 09:24:49 2016 (-0800)
  *           By: Pushpal Sidhu
  *
  * Compatibility: ARCH=arm && proc=imx6
@@ -28,7 +28,7 @@
  */
 
 #ifndef VERSION
-#define VERSION "1.2"
+#define VERSION "1.3"
 #endif
 
 #include <ecode.h>
@@ -429,7 +429,7 @@ int main (int argc, char *argv[])
 		{"video-in",         required_argument, 0, 'i'},
 		{"caps-filter",      required_argument, 0, 'f'},
 		{"min-bitrate",      required_argument, 0,  0 },
-		{"bitrate",          required_argument, 0, 'b'},
+		{"max-bitrate",      required_argument, 0, 'b'},
 		{"max-quant-lvl",    required_argument, 0,  0 },
 		{"min-quant-lvl",    required_argument, 0, 'l'},
 		{"config-interval",  required_argument, 0, 'c'},

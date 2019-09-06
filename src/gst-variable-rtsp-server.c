@@ -78,6 +78,12 @@
  *  - quant-param: Constant quantization quality parameter
  *                 (ignored if bitrate is set to a nonzero value)
  *                 Please note that '0' is the 'best' quality.
+ *
+ * v4l2h264enc:
+ *  The encoder driver's controls are exposed via V4L2 controls in the
+ *  'extra-controls' property. For CODA960 h264 we use the following:
+ *  - video_bitrate: Bitrate to use, in kbps
+ *  - 
  */
 #define MIN_BR  "0"	     /* The min value "bitrate" to (0 = VBR)*/
 #define MAX_BR  "4294967295" /* Max as defined by imxvpuenc_h264 */
@@ -136,6 +142,7 @@ void _dbg(const char *func, unsigned int line,
 
 static gboolean periodic_msg_handler(struct stream_info *si)
 {
+	const gchar *name = g_ascii_strdown(G_OBJECT_TYPE_NAME(si->stream[encoder]), -1);
 	dbg(4, "called\n");
 
 	if (si->connected == FALSE) {
@@ -161,6 +168,12 @@ static gboolean periodic_msg_handler(struct stream_info *si)
 			gst_structure_free (stats);
 		}
 
+		if (strstr(name, "v4l2h264enc") != NULL) {
+			GstStructure *extra_controls;
+			g_object_get(si->stream[encoder], "extra-controls", &extra_controls, NULL);
+			g_print("extra-controls=%s\n", gst_structure_to_string(extra_controls));
+		}
+
 		g_print("\n");
 	} else {
 		dbg(2, "Destroying 'periodic message' handler\n");
@@ -171,12 +184,99 @@ static gboolean periodic_msg_handler(struct stream_info *si)
 }
 
 /**
+ * setup_source
+ * Sets up a source element, if necessary
+ */
+static void setup_source(GstElement *src, const gchar *name,
+			 struct stream_info *si)
+{
+	si->stream[source] = src;
+
+	/* setup for specific sources */
+	if (strstr(name, "v4l2src") != NULL) {
+		g_print("Setting input device=%s\n", si->video_in);
+		g_object_set(si->stream[source], "device", si->video_in, NULL);
+	}
+}
+
+/**
+ * setup_encoder
+ * Properly Sets up an encoder based on what encoder is being used
+ */
+static void setup_encoder(GstElement *enc, const gchar *name,
+			  struct stream_info *si)
+{
+	gchar *str;
+	GstStructure *extra_controls;
+	si->stream[encoder] = enc;
+
+	/* setup for specific encoders */
+	if (strstr(name, "imxvpuenc_h264") != NULL) {
+		g_print("Setting encoder bitrate=%d\n", si->curr_bitrate);
+		g_object_set(si->stream[encoder], "bitrate", si->curr_bitrate, NULL);
+		g_print("Setting encoder quant-param=%d\n", si->curr_quant_lvl);
+		g_object_set(si->stream[encoder], "quant-param", si->curr_quant_lvl,
+			     NULL);
+		g_object_set(si->stream[encoder], "idr-interval", si->idr, NULL);
+	}
+	else if (strstr(name, "v4l2h264enc") != NULL) {
+		str = g_strdup_printf("controls,h264_profile=4,video_bitrate=%d",
+				      si->curr_bitrate);
+		g_print("Setting encoder extra-controls=%s\n", str);
+		extra_controls = gst_structure_from_string(str, NULL);
+		g_object_set(si->stream[encoder], "extra-controls",
+			     extra_controls, NULL);
+		gst_structure_free(extra_controls);
+		g_free(str);
+	}
+}
+
+/**
+ * setup_payload
+ * Sets up payloads if setup is needed
+ */
+static void setup_payload(GstElement *pay, const gchar *name,
+			  struct stream_info *si)
+{
+	si->stream[protocol] = pay;
+
+	/* setup for specific payloads */
+	if (strstr(name, "rtph264pay") != NULL) {
+		g_print("Setting rtp config-interval=%d\n",
+			(int) si->config_interval);
+		g_object_set(si->stream[protocol], "config-interval",
+			     si->config_interval, NULL);
+	}
+}
+
+/**
+ * setup_elements
+ * Called on each element and if necessary hands the element off
+ * to be configured
+ */
+static void setup_elements(const GValue * item, gpointer user_data)
+{
+	GstElement *elem = g_value_get_object(item);
+	const gchar *name = g_ascii_strdown(G_OBJECT_TYPE_NAME(elem), -1);
+
+	/* call appropriate setup function */
+	if (strstr(name, "src") != NULL)
+		setup_source(elem, name, user_data);
+	else if (strstr(name, "enc") != NULL)
+		setup_encoder(elem, name, user_data);
+	else if (strstr(name, "pay") != NULL)
+		setup_payload(elem, name, user_data);
+}
+
+/**
  * media_configure_handler
  * Setup pipeline when the stream is first configured
  */
 static void media_configure_handler(GstRTSPMediaFactory *factory,
 				    GstRTSPMedia *media, struct stream_info *si)
 {
+	GstIterator *iter;
+
 	dbg(4, "called\n");
 
 	si->media = media;
@@ -184,39 +284,11 @@ static void media_configure_handler(GstRTSPMediaFactory *factory,
 	g_print("[%d]Configuring pipeline...\n", si->num_cli);
 
 	si->stream[pipeline] = gst_rtsp_media_get_element(media);
-	si->stream[source] = gst_bin_get_by_name(GST_BIN(si->stream[pipeline]),
-						 "source0");
-	si->stream[caps] = gst_bin_get_by_name(GST_BIN(si->stream[pipeline]),
-					       "caps0");
-	si->stream[encoder] = gst_bin_get_by_name(GST_BIN(si->stream[pipeline]),
-						  "enc0");
-	si->stream[protocol] = gst_bin_get_by_name(
-		GST_BIN(si->stream[pipeline]), "pay0");
 
-	if(!(si->stream[source] &&
-	     si->stream[caps] &&
-	     si->stream[encoder] &&
-	     si->stream[protocol])) {
-		g_printerr("Couldn't get pipeline elements\n");
-		exit(-ECODE_PIPE);
-	}
-
-	/* Modify v4l2src Properties */
-	g_print("Setting input device=%s\n", si->video_in);
-	g_object_set(si->stream[source], "device", si->video_in, NULL);
-
-	/* Modify imxvpuenc_h264 Properties */
-	g_print("Setting encoder bitrate=%d\n", si->curr_bitrate);
-	g_object_set(si->stream[encoder], "bitrate", si->curr_bitrate, NULL);
-	g_print("Setting encoder quant-param=%d\n", si->curr_quant_lvl);
-	g_object_set(si->stream[encoder], "quant-param", si->curr_quant_lvl,
-		     NULL);
-	g_object_set(si->stream[encoder], "idr-interval", si->idr, NULL);
-
-	/* Modify rtph264pay Properties */
-	g_print("Setting rtp config-interval=%d\n",(int) si->config_interval);
-	g_object_set(si->stream[protocol], "config-interval",
-		     si->config_interval, NULL);
+	/* Iterate through pipeline and setup elements*/
+	iter = gst_bin_iterate_elements(GST_BIN(si->stream[pipeline]));
+	gst_iterator_foreach(iter, setup_elements, si);
+	gst_iterator_free(iter);
 
 	if (si->num_cli == 1) {
 		/* Create Msg Event Handler */
@@ -224,6 +296,11 @@ static void media_configure_handler(GstRTSPMediaFactory *factory,
 		g_timeout_add(si->msg_rate * 1000,
 			      (GSourceFunc)periodic_msg_handler, si);
 	}
+
+	printf("%s: source=%s, encoder=%s, payload=%s\n", __func__,
+	       G_OBJECT_TYPE_NAME(si->stream[source]),
+	       G_OBJECT_TYPE_NAME(si->stream[encoder]),
+	       G_OBJECT_TYPE_NAME(si->stream[protocol]));
 }
 
 /**
@@ -236,6 +313,7 @@ static void change_quant(struct stream_info *si)
 
 	gint c = si->curr_quant_lvl;
 	int step = (si->max_quant_lvl - si->min_quant_lvl) / si->steps;
+	const gchar *name = g_ascii_strdown(G_OBJECT_TYPE_NAME(si->stream[encoder]), -1);
 
 	/* Change quantization based on # of clients * step factor */
 	/* It's OK to scale from min since lower val means higher qual */
@@ -248,8 +326,10 @@ static void change_quant(struct stream_info *si)
 	if (si->curr_quant_lvl != c) {
 		g_print("[%d]Changing quant-lvl from %d to %d\n", si->num_cli,
 			c, si->curr_quant_lvl);
-		g_object_set(si->stream[encoder], "quant-param",
-			     si->curr_quant_lvl, NULL);
+		if (strstr(name, "imxvpuenc_h264") != NULL) {
+			g_object_set(si->stream[encoder], "quant-param",
+				     si->curr_quant_lvl, NULL);
+		}
 	}
 }
 
@@ -263,6 +343,8 @@ static void change_bitrate(struct stream_info *si)
 
 	int c = si->curr_bitrate;
 	int step = (si->max_bitrate - si->min_bitrate) / si->steps;
+	const gchar *name = g_ascii_strdown(G_OBJECT_TYPE_NAME(si->stream[encoder]), -1);
+	GstStructure *extra_controls;
 
 	/* Change bitrate based on # of clients * step factor */
 	si->curr_bitrate = si->max_bitrate - ((si->num_cli - 1) * step);
@@ -276,8 +358,19 @@ static void change_bitrate(struct stream_info *si)
 	if (si->curr_bitrate != c) {
 		g_print("[%d]Changing bitrate from %d to %d\n", si->num_cli, c,
 			si->curr_bitrate);
-		g_object_set(si->stream[encoder], "bitrate", si->curr_bitrate,
-			     NULL);
+		if (strstr(name, "imxvpuenc_h264") != NULL) {
+			g_object_set(si->stream[encoder], "bitrate",
+				     si->curr_bitrate, NULL);
+		}
+		else if (strstr(name, "v4l2h264enc") != NULL) {
+			g_object_get(si->stream[encoder], "extra-controls",
+				     &extra_controls, NULL);
+			gst_structure_set(extra_controls, "video_bitrate",
+					  G_TYPE_INT, si->curr_bitrate, NULL);
+			g_object_set(si->stream[encoder], "extra-controls",
+				     extra_controls, NULL);
+			gst_structure_free(extra_controls);
+		}
 	}
 }
 
@@ -297,18 +390,6 @@ static void client_close_handler(GstRTSPClient *client, struct stream_info *si)
 		dbg(3, "Connection terminated\n");
 		si->connected = FALSE;
 
-		if (!(si->stream[pipeline] && si->stream[source] &&
-		      si->stream[caps] && si->stream[encoder] &&
-		      si->stream[protocol])) {
-			gst_element_set_state(si->stream[pipeline],
-					      GST_STATE_NULL);
-
-			gst_object_unref(si->stream[source]);
-			gst_object_unref(si->stream[caps]);
-			gst_object_unref(si->stream[encoder]);
-			gst_object_unref(si->stream[protocol]);
-			gst_object_unref(si->stream[pipeline]);
-		}
 		/* Created when first new client connected */
 		free(si->stream);
 	} else {
@@ -664,11 +745,9 @@ int main (int argc, char *argv[])
 
 	/* Configure Callbacks */
 	/* Create new client handler (Called on new client connect) */
-	if (!user_pipeline) {
-		dbg(2, "Creating 'client-connected' signal handler\n");
-		g_signal_connect(info.server, "client-connected",
-				 G_CALLBACK(new_client_handler), &info);
-	}
+	printf("Creating 'client-connected' signal handler\n");
+	g_signal_connect(info.server, "client-connected",
+		         G_CALLBACK(new_client_handler), &info);
 
 	/* Run GBLIB main loop until it returns */
 	g_print("Stream ready at rtsp://" DEFAULT_HOST ":%s%s\n",

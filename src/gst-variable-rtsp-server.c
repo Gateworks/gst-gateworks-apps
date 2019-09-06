@@ -110,7 +110,6 @@ struct stream_info {
 	GstRTSPMedia *media;	      /* RTSP Media */
 	GstElement **stream;	      /* Array of elements */
 	gboolean connected;	      /* Flag to see if this is in use */
-	gchar *video_in;	      /* Video in device */
 	gint config_interval;	      /* RTP Send Config Interval */
 	gint idr;		      /* Interval betweeen IDR frames */
 	gint steps;		      /* Steps to scale quality at */
@@ -184,22 +183,6 @@ static gboolean periodic_msg_handler(struct stream_info *si)
 }
 
 /**
- * setup_source
- * Sets up a source element, if necessary
- */
-static void setup_source(GstElement *src, const gchar *name,
-			 struct stream_info *si)
-{
-	si->stream[source] = src;
-
-	/* setup for specific sources */
-	if (strstr(name, "v4l2src") != NULL) {
-		g_print("Setting input device=%s\n", si->video_in);
-		g_object_set(si->stream[source], "device", si->video_in, NULL);
-	}
-}
-
-/**
  * setup_encoder
  * Properly Sets up an encoder based on what encoder is being used
  */
@@ -260,9 +243,7 @@ static void setup_elements(const GValue * item, gpointer user_data)
 	const gchar *name = g_ascii_strdown(G_OBJECT_TYPE_NAME(elem), -1);
 
 	/* call appropriate setup function */
-	if (strstr(name, "src") != NULL)
-		setup_source(elem, name, user_data);
-	else if (strstr(name, "enc") != NULL)
+	if (strstr(name, "enc") != NULL)
 		setup_encoder(elem, name, user_data);
 	else if (strstr(name, "pay") != NULL)
 		setup_payload(elem, name, user_data);
@@ -297,8 +278,7 @@ static void media_configure_handler(GstRTSPMediaFactory *factory,
 			      (GSourceFunc)periodic_msg_handler, si);
 	}
 
-	printf("%s: source=%s, encoder=%s, payload=%s\n", __func__,
-	       G_OBJECT_TYPE_NAME(si->stream[source]),
+	printf("%s: encoder=%s, payload=%s\n", __func__,
 	       G_OBJECT_TYPE_NAME(si->stream[encoder]),
 	       G_OBJECT_TYPE_NAME(si->stream[protocol]));
 }
@@ -454,7 +434,6 @@ int main (int argc, char *argv[])
 	struct stream_info info = {
 		.num_cli = 0,
 		.connected = FALSE,
-		.video_in = "/dev/video0",
 		.config_interval = atoi(DEFAULT_CONFIG_INTERVAL),
 		.idr = atoi(DEFAULT_IDR_INTERVAL),
 		.steps = atoi(DEFAULT_STEPS) - 1,
@@ -483,9 +462,6 @@ int main (int argc, char *argv[])
 		{"mount-point",      required_argument, 0, 'm'},
 		{"port",             required_argument, 0, 'p'},
 		{"user-pipeline",    required_argument, 0, 'u'},
-		{"src-element",      required_argument, 0, 's'},
-		{"video-in",         required_argument, 0, 'i'},
-		{"caps-filter",      required_argument, 0, 'f'},
 		{"steps",            required_argument, 0,  0 },
 		{"min-bitrate",      required_argument, 0,  0 },
 		{"max-bitrate",      required_argument, 0, 'b'},
@@ -508,14 +484,6 @@ int main (int argc, char *argv[])
 		" --port,            -p - Port to sink on"
 		" (default: " DEFAULT_PORT ")\n"
 		" --user-pipeline,   -u - User supplied pipeline. Note the\n"
-		"                         below options are NO LONGER"
-		" applicable.\n"
-		" --src-element,     -s - Gstreamer source element. Must have\n"
-		"                         a 'device' property"
-		" (default: " DEFAULT_SRC_ELEMENT ")\n"
-		" --video-in,        -i - Input Device (default: /dev/video0)\n"
-		" --caps-filter,     -f - Caps filter between src and\n"
-		"                         video transform (default: None)\n"
 		" --steps,              - Steps to get to 'worst' quality"
 		" (default: " DEFAULT_STEPS ")\n"
 		" --max-bitrate,     -b - Max bitrate cap, 0 == VBR"
@@ -533,11 +501,8 @@ int main (int argc, char *argv[])
 		" --msg-rate,        -r - Rate of messages displayed"
 		" (default: 5s)\n\n"
 		"Examples:\n"
-		" 1. Capture using imxv4l2videosrc, changes quality:\n"
-		"\tgst-variable-rtsp-server -s imxv4l2videosrc\n"
-		"\n"
-		" 2. Create RTSP server out of user created pipeline:\n"
-		"\tgst-variable-rtsp-server -u \"videotestsrc ! imxvpuenc_h264"
+		" - Create RTSP server out of user created pipeline:\n"
+		"\tgst-variable-rtsp-server -u \"videotestsrc ! v4l2h264enc"
 		" ! rtph264pay name=pay0 pt=96\"\n"
 		;
 
@@ -618,14 +583,6 @@ int main (int argc, char *argv[])
 		case 'u': /* User Pipeline*/
 			user_pipeline = optarg;
 			dbg(1, "set user pipeline to: %s\n", user_pipeline);
-			break;
-		case 's': /* Video source element */
-			src_element = optarg;
-			dbg(1, "set source element to: %s\n", src_element);
-			break;
-		case 'i': /* Video in parameter */
-			info.video_in = optarg;
-			dbg(1, "set video in to: %s\n", info.video_in);
 			break;
 		case 'f': /* caps filter */
 			caps_filter = optarg;

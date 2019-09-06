@@ -59,11 +59,6 @@
 #define DEFAULT_PORT            "9099"
 #define DEFAULT_MOUNT_POINT     "/stream"
 #define DEFAULT_HOST            "127.0.0.1"
-#define DEFAULT_SRC_ELEMENT     "v4l2src"
-#define STATIC_SINK_PIPELINE			\
-	" imxipuvideotransform name=caps0 !"	\
-	" imxvpuenc_h264 name=enc0 !"		\
-	" rtph264pay name=pay0 pt=96"
 
 /* Default quality 'steps' */
 #define DEFAULT_STEPS "5"
@@ -448,7 +443,6 @@ int main (int argc, char *argv[])
 
 	char *port = (char *) DEFAULT_PORT;
 	char *mount_point = (char *) DEFAULT_MOUNT_POINT;
-	char *src_element = (char *) DEFAULT_SRC_ELEMENT;
 	char *caps_filter = NULL;
 	char *user_pipeline = NULL;
 	/* Launch pipeline shouldn't exceed LAUNCH_MAX bytes of characters */
@@ -675,14 +669,7 @@ int main (int argc, char *argv[])
 	gst_rtsp_media_factory_set_shared(info.factory, TRUE);
 
 	/* Source Pipeline */
-	if (user_pipeline)
-		snprintf(launch, LAUNCH_MAX, "( %s )", user_pipeline);
-	else
-		snprintf(launch, LAUNCH_MAX, "%s name=source0 ! %s%s"
-			 STATIC_SINK_PIPELINE,
-			 src_element,
-			 (caps_filter) ? caps_filter : "",
-			 (caps_filter) ? " ! " : "");
+	snprintf(launch, LAUNCH_MAX, "( %s )", user_pipeline);
 	g_print("Pipeline set to: %s...\n", launch);
 	gst_rtsp_media_factory_set_launch(info.factory, launch);
 

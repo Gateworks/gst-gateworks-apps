@@ -650,6 +650,11 @@ int main (int argc, char *argv[])
 		return -ECODE_ARGS;
 	}
 
+	if (strlen(g_strstrip(user_pipeline)) == 0) {
+		g_printerr("Pipeline must be specified\n");
+		return -ECODE_ARGS;
+	}
+
 	/* Configure RTSP */
 	info.server = gst_rtsp_server_new();
 	if (!info.server) {

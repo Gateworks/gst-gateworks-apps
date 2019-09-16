@@ -70,9 +70,6 @@
  * imxvpuenc_h264:
  *  - bitrate: Bitrate to use, in kbps
  *             (0 = no bitrate control; constant quality mode is used)
- *  - quant-param: Constant quantization quality parameter
- *                 (ignored if bitrate is set to a nonzero value)
- *                 Please note that '0' is the 'best' quality.
  *
  * v4l2h264enc:
  *  The encoder driver's controls are exposed via V4L2 controls in the
@@ -83,10 +80,6 @@
 #define MIN_BR  "0"	     /* The min value "bitrate" to (0 = VBR)*/
 #define MAX_BR  "4294967295" /* Max as defined by imxvpuenc_h264 */
 #define CURR_BR "10000"      /* Default to 10mbit/s */
-
-#define MIN_QUANT_LVL  "0"   /* Minimum quant-param for h264 */
-#define MAX_QUANT_LVL  "51"  /* Maximum quant-param for h264 */
-#define CURR_QUANT_LVL MIN_QUANT_LVL
 
 /**
  * Source and Sink must always be positioned as such. Elements can be added
@@ -108,9 +101,6 @@ struct stream_info {
 	gint config_interval;	      /* RTP Send Config Interval */
 	gint idr;		      /* Interval betweeen IDR frames */
 	gint steps;		      /* Steps to scale quality at */
-	gint min_quant_lvl;	      /* Min Quant Level */
-	gint max_quant_lvl;	      /* Max Quant Level */
-	gint curr_quant_lvl;	      /* Current Quant Level */
 	gint min_bitrate;	      /* Min Bitrate */
 	gint max_bitrate;	      /* Max Bitrate */
 	gint curr_bitrate;	      /* Current Bitrate */
@@ -148,11 +138,9 @@ static gboolean periodic_msg_handler(struct stream_info *si)
 		GstStructure *stats;
 		g_print("### MSG BLOCK ###\n");
 		g_print("Number of Clients    : %d\n", si->num_cli);
-		g_print("Current Quant Level  : %d\n", si->curr_quant_lvl);
 		g_print("Current Bitrate Level: %d\n", si->curr_bitrate);
-		g_print("Step Factor          : %d\n", (si->curr_bitrate) ?
-			((si->max_bitrate - si->min_bitrate) / si->steps) :
-			((si->max_quant_lvl - si->min_quant_lvl) / si->steps));
+		g_print("Step Factor          : %d\n",
+			(si->max_bitrate - si->min_bitrate) / si->steps);
 
 		g_object_get(G_OBJECT(si->stream[protocol]), "stats", &stats,
 			     NULL);
@@ -279,36 +267,6 @@ static void media_configure_handler(GstRTSPMediaFactory *factory,
 }
 
 /**
- * change_quant
- * handle changing of quant-levels
- */
-static void change_quant(struct stream_info *si)
-{
-	dbg(4, "called\n");
-
-	gint c = si->curr_quant_lvl;
-	int step = (si->max_quant_lvl - si->min_quant_lvl) / si->steps;
-	const gchar *name = g_ascii_strdown(G_OBJECT_TYPE_NAME(si->stream[encoder]), -1);
-
-	/* Change quantization based on # of clients * step factor */
-	/* It's OK to scale from min since lower val means higher qual */
-	si->curr_quant_lvl = ((si->num_cli - 1) * step) + si->min_quant_lvl;
-
-	/* Cap to max quant level */
-	if (si->curr_quant_lvl > si->max_quant_lvl)
-		si->curr_quant_lvl = si->max_quant_lvl;
-
-	if (si->curr_quant_lvl != c) {
-		g_print("[%d]Changing quant-lvl from %d to %d\n", si->num_cli,
-			c, si->curr_quant_lvl);
-		if (strstr(name, "imxvpuenc_h264") != NULL) {
-			g_object_set(si->stream[encoder], "quant-param",
-				     si->curr_quant_lvl, NULL);
-		}
-	}
-}
-
-/**
  * change_bitrate
  * handle changing of bitrates
  */
@@ -367,12 +325,8 @@ static void client_close_handler(GstRTSPClient *client, struct stream_info *si)
 
 		/* Created when first new client connected */
 		free(si->stream);
-	} else {
-		if (si->curr_bitrate)
-			change_bitrate(si);
-		else
-			change_quant(si);
-	}
+	} else
+		change_bitrate(si);
 }
 
 /**
@@ -407,12 +361,8 @@ static void new_client_handler(GstRTSPServer *server, GstRTSPClient *client,
 					 G_CALLBACK(media_configure_handler),
 					 si);
 		}
-	} else {
-		if (si->curr_bitrate)
-			change_bitrate(si);
-		else
-			change_quant(si);
-	}
+	} else
+		change_bitrate(si);
 
 	/* Create new client_close_handler */
 	dbg(2, "Creating 'closed' signal handler\n");
@@ -432,9 +382,6 @@ int main (int argc, char *argv[])
 		.config_interval = atoi(DEFAULT_CONFIG_INTERVAL),
 		.idr = atoi(DEFAULT_IDR_INTERVAL),
 		.steps = atoi(DEFAULT_STEPS) - 1,
-		.min_quant_lvl = atoi(MIN_QUANT_LVL),
-		.max_quant_lvl = atoi(MAX_QUANT_LVL),
-		.curr_quant_lvl = atoi(CURR_QUANT_LVL),
 		.min_bitrate = 1,
 		.max_bitrate = atoi(CURR_BR),
 		.curr_bitrate = atoi(CURR_BR),
@@ -443,7 +390,6 @@ int main (int argc, char *argv[])
 
 	char *port = (char *) DEFAULT_PORT;
 	char *mount_point = (char *) DEFAULT_MOUNT_POINT;
-	char *caps_filter = NULL;
 	char *user_pipeline = NULL;
 	/* Launch pipeline shouldn't exceed LAUNCH_MAX bytes of characters */
 	char launch[LAUNCH_MAX];
@@ -456,11 +402,9 @@ int main (int argc, char *argv[])
 		{"mount-point",      required_argument, 0, 'm'},
 		{"port",             required_argument, 0, 'p'},
 		{"user-pipeline",    required_argument, 0, 'u'},
-		{"steps",            required_argument, 0,  0 },
+		{"steps",            required_argument, 0, 's'},
 		{"min-bitrate",      required_argument, 0,  0 },
 		{"max-bitrate",      required_argument, 0, 'b'},
-		{"max-quant-lvl",    required_argument, 0,  0 },
-		{"min-quant-lvl",    required_argument, 0, 'l'},
 		{"config-interval",  required_argument, 0, 'c'},
 		{"idr",              required_argument, 0, 'a'},
 		{"msg-rate",         required_argument, 0, 'r'},
@@ -478,16 +422,12 @@ int main (int argc, char *argv[])
 		" --port,            -p - Port to sink on"
 		" (default: " DEFAULT_PORT ")\n"
 		" --user-pipeline,   -u - User supplied pipeline. Note the\n"
-		" --steps,              - Steps to get to 'worst' quality"
+		" --steps,           -s - Steps to get to 'worst' quality"
 		" (default: " DEFAULT_STEPS ")\n"
 		" --max-bitrate,     -b - Max bitrate cap, 0 == VBR"
 		" (default: " CURR_BR ")\n"
 		" --min-bitrate,        - Min bitrate cap"
 		" (default: 1)\n"
-		" --max-quant-lvl,      - Max quant-level cap"
-		" (default: " MAX_QUANT_LVL ")\n"
-		" --min-quant-lvl,   -l - Min quant-level cap"
-		" (default: " MIN_QUANT_LVL ")\n"
 		" --config-interval, -c - Interval to send rtp config"
 		" (default: 2s)\n"
 		" --idr              -a - Interval between IDR Frames"
@@ -513,11 +453,7 @@ int main (int argc, char *argv[])
 
 		switch (c) {
 		case 0: /* long-opts only parsing */
-			if (strcmp(long_opts[opt_ndx].name, "steps") == 0) {
-				/* Change steps to internal usage of it */
-				info.steps = atoi(optarg) - 1;
-				dbg(1, "set steps to: %d\n", info.steps);
-			} else if (strcmp(long_opts[opt_ndx].name,
+			if (strcmp(long_opts[opt_ndx].name,
 					"min-bitrate") == 0) {
 				info.min_bitrate = atoi(optarg);
 				if (info.min_bitrate > atoi(MAX_BR)) {
@@ -531,25 +467,6 @@ int main (int argc, char *argv[])
 
 				dbg(1, "set min bitrate to: %d\n",
 				    info.min_bitrate);
-			} else if (strcmp(long_opts[opt_ndx].name,
-					  "max-quant-lvl") == 0) {
-				info.max_quant_lvl = atoi(optarg);
-				if (info.max_quant_lvl > atoi(MAX_QUANT_LVL)) {
-					g_print("Maximum quant-lvl is "
-						MAX_QUANT_LVL
-						".\n");
-					info.max_quant_lvl =
-						atoi(MAX_QUANT_LVL);
-				} else if (info.max_quant_lvl <
-					   atoi(MIN_QUANT_LVL)) {
-					g_print("Minimum quant-lvl is "
-						MIN_QUANT_LVL
-						".\n");
-					info.max_quant_lvl =
-						atoi(MIN_QUANT_LVL);
-				}
-				dbg(1, "set max quant to: %d\n",
-				    info.max_quant_lvl);
 			} else {
 				puts(usage);
 				return -ECODE_ARGS;
@@ -578,9 +495,9 @@ int main (int argc, char *argv[])
 			user_pipeline = optarg;
 			dbg(1, "set user pipeline to: %s\n", user_pipeline);
 			break;
-		case 'f': /* caps filter */
-			caps_filter = optarg;
-			dbg(1, "set caps filter to: %s\n", caps_filter);
+		case 's': /* Steps */
+			info.steps = atoi(optarg) - 1;
+			dbg(1, "set steps to: %d\n", info.steps);
 			break;
 		case 'b': /* Max Bitrate */
 			info.max_bitrate = atoi(optarg);
@@ -594,22 +511,6 @@ int main (int argc, char *argv[])
 
 			info.curr_bitrate = info.max_bitrate;
 			dbg(1, "set max bitrate to: %d\n", info.max_bitrate);
-			break;
-		case 'l':
-			info.min_quant_lvl = atoi(optarg);
-			if (info.min_quant_lvl > atoi(MAX_QUANT_LVL)) {
-				g_print("Maximum quant-lvl is " MAX_QUANT_LVL
-					".\n");
-				info.min_quant_lvl = atoi(MAX_QUANT_LVL);
-			} else if (info.min_quant_lvl < atoi(MIN_QUANT_LVL)) {
-				g_print("Minimum quant-lvl is " MIN_QUANT_LVL
-					".\n");
-				info.min_quant_lvl = atoi(MIN_QUANT_LVL);
-			}
-
-			info.curr_quant_lvl = info.min_quant_lvl;
-			dbg(1, "set min quant lvl to: %d\n",
-			    info.min_quant_lvl);
 			break;
 		case 'c': /* config-interval */
 			info.config_interval = atoi(optarg);
@@ -631,12 +532,6 @@ int main (int argc, char *argv[])
 	}
 
 	/* Validate inputs */
-	if (info.max_quant_lvl < info.min_quant_lvl) {
-		g_printerr("Max Quant level must be"
-			   "greater than Min Quant level\n");
-		return -ECODE_ARGS;
-	}
-
 	if ((info.max_bitrate + 1) < info.min_bitrate) {
 		g_printerr("Max bitrate must be greater than min bitrate\n");
 		return -ECODE_ARGS;

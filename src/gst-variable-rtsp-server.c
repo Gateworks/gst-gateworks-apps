@@ -412,7 +412,6 @@ int main (int argc, char *argv[])
 		{"debug",            required_argument, 0, 'd'},
 		{"mount-point",      required_argument, 0, 'm'},
 		{"port",             required_argument, 0, 'p'},
-		{"user-pipeline",    required_argument, 0, 'u'},
 		{"steps",            required_argument, 0, 's'},
 		{"min-bitrate",      required_argument, 0,  0 },
 		{"max-bitrate",      required_argument, 0, 'b'},
@@ -432,7 +431,6 @@ int main (int argc, char *argv[])
 		" (default: " DEFAULT_MOUNT_POINT ")\n"
 		" --port,            -p - Port to sink on"
 		" (default: " DEFAULT_PORT ")\n"
-		" --user-pipeline,   -u - User supplied pipeline. Note the\n"
 		" --steps,           -s - Steps to get to 'worst' quality"
 		" (default: " DEFAULT_STEPS ")\n"
 		" --max-bitrate,     -b - Max bitrate cap, 0 == VBR"
@@ -447,7 +445,7 @@ int main (int argc, char *argv[])
 		" (default: 5s)\n\n"
 		"Examples:\n"
 		" - Create RTSP server out of user created pipeline:\n"
-		"\tgst-variable-rtsp-server -u \"videotestsrc ! v4l2h264enc"
+		"\tgst-variable-rtsp-server \"videotestsrc ! v4l2h264enc"
 		" ! rtph264pay name=pay0 pt=96\"\n"
 		;
 
@@ -502,10 +500,6 @@ int main (int argc, char *argv[])
 			port = optarg;
 			dbg(1, "set port to: %s\n", port);
 			break;
-		case 'u': /* User Pipeline*/
-			user_pipeline = optarg;
-			dbg(1, "set user pipeline to: %s\n", user_pipeline);
-			break;
 		case 's': /* Steps */
 			info.steps = atoi(optarg) - 1;
 			dbg(1, "set steps to: %d\n", info.steps);
@@ -540,7 +534,11 @@ int main (int argc, char *argv[])
 			puts(usage);
 			return -ECODE_ARGS;
 		}
+
 	}
+
+	/* Grab user pipeline */
+	user_pipeline = argv[argc-1];
 
 	/* Validate inputs */
 	if ((info.max_bitrate + 1) < info.min_bitrate) {
@@ -557,7 +555,7 @@ int main (int argc, char *argv[])
 	}
 
 	if (strlen(g_strstrip(user_pipeline)) == 0) {
-		g_printerr("Pipeline must be specified\n");
+		g_printerr("A pipeline must be specified\n");
 		return -ECODE_ARGS;
 	}
 

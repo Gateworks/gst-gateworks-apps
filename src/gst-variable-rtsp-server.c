@@ -449,6 +449,12 @@ int main (int argc, char *argv[])
 		" ! rtph264pay name=pay0 pt=96\"\n"
 		;
 
+	/* Ensure that there are command arguments */
+	if (argc == 1) {
+		puts(usage);
+		return -ECODE_ARGS;
+	}
+
 	/* Init GStreamer */
 	gst_init(&argc, &argv);
 

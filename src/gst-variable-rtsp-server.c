@@ -180,20 +180,31 @@ static void setup_encoder(GstElement *enc, const gchar *name,
 	if (strstr(name, "imxvpuenc_h264") != NULL) {
 		g_print("Setting encoder bitrate=%d\n", si->curr_bitrate);
 		g_object_set(si->stream[encoder], "bitrate", si->curr_bitrate, NULL);
-		g_print("Setting encoder quant-param=%d\n", si->curr_quant_lvl);
-		g_object_set(si->stream[encoder], "quant-param", si->curr_quant_lvl,
-			     NULL);
 		g_object_set(si->stream[encoder], "idr-interval", si->idr, NULL);
 	}
 	else if (strstr(name, "v4l2h264enc") != NULL) {
-		str = g_strdup_printf("controls,h264_profile=4,video_bitrate=%d",
-				      si->curr_bitrate);
-		g_print("Setting encoder extra-controls=%s\n", str);
-		extra_controls = gst_structure_from_string(str, NULL);
+
+		g_object_get(si->stream[encoder], "extra-controls",
+			     &extra_controls, NULL);
+
+		if (extra_controls == NULL) {
+			str = g_strdup_printf("controls,"
+					      "h264_profile=4,"
+					      "video_bitrate=%d",si->curr_bitrate);
+			extra_controls = gst_structure_from_string(str, NULL);
+			g_free(str);
+		} else {
+			gst_structure_set(extra_controls,
+				  "video_bitrate", G_TYPE_INT, si->curr_bitrate,
+				  "h264_profile", G_TYPE_INT, 4,
+				  NULL);
+		}
+
+		g_print("Setting encoder extra-controls=%s\n",
+		       gst_structure_to_string(extra_controls));
 		g_object_set(si->stream[encoder], "extra-controls",
 			     extra_controls, NULL);
 		gst_structure_free(extra_controls);
-		g_free(str);
 	}
 }
 

@@ -43,10 +43,6 @@
 #include <glib.h>
 
 /**
- * gstreamer rtph264pay:
- *  - config-interval: SPS and PPS Insertion Interval
- * h264:
- *  - idr_interval - interval between IDR frames
  * rtsp-server:
  *  - port: Server port
  *  - mount_point: Server mount point
@@ -98,8 +94,6 @@ struct stream_info {
 	GstRTSPMedia *media;	      /* RTSP Media */
 	GstElement **stream;	      /* Array of elements */
 	gboolean connected;	      /* Flag to see if this is in use */
-	gint config_interval;	      /* RTP Send Config Interval */
-	gint idr;		      /* Interval betweeen IDR frames */
 	gint steps;		      /* Steps to scale quality at */
 	gint min_bitrate;	      /* Min Bitrate */
 	gint max_bitrate;	      /* Max Bitrate */
@@ -180,7 +174,6 @@ static void setup_encoder(GstElement *enc, const gchar *name,
 	if (strstr(name, "imxvpuenc_h264") != NULL) {
 		g_print("Setting encoder bitrate=%d\n", si->curr_bitrate);
 		g_object_set(si->stream[encoder], "bitrate", si->curr_bitrate, NULL);
-		g_object_set(si->stream[encoder], "idr-interval", si->idr, NULL);
 	}
 	else if (strstr(name, "v4l2h264enc") != NULL) {
 
@@ -216,14 +209,6 @@ static void setup_payload(GstElement *pay, const gchar *name,
 			  struct stream_info *si)
 {
 	si->stream[protocol] = pay;
-
-	/* setup for specific payloads */
-	if (strstr(name, "rtph264pay") != NULL) {
-		g_print("Setting rtp config-interval=%d\n",
-			(int) si->config_interval);
-		g_object_set(si->stream[protocol], "config-interval",
-			     si->config_interval, NULL);
-	}
 }
 
 /**
@@ -336,8 +321,9 @@ static void client_close_handler(GstRTSPClient *client, struct stream_info *si)
 
 		/* Created when first new client connected */
 		free(si->stream);
-	} else
+	} else {
 		change_bitrate(si);
+	}
 }
 
 /**
@@ -372,8 +358,9 @@ static void new_client_handler(GstRTSPServer *server, GstRTSPClient *client,
 					 G_CALLBACK(media_configure_handler),
 					 si);
 		}
-	} else
+	} else {
 		change_bitrate(si);
+	}
 
 	/* Create new client_close_handler */
 	dbg(2, "Creating 'closed' signal handler\n");
@@ -390,8 +377,6 @@ int main (int argc, char *argv[])
 	struct stream_info info = {
 		.num_cli = 0,
 		.connected = FALSE,
-		.config_interval = atoi(DEFAULT_CONFIG_INTERVAL),
-		.idr = atoi(DEFAULT_IDR_INTERVAL),
 		.steps = atoi(DEFAULT_STEPS) - 1,
 		.min_bitrate = 1,
 		.max_bitrate = atoi(CURR_BR),
@@ -415,8 +400,6 @@ int main (int argc, char *argv[])
 		{"steps",            required_argument, 0, 's'},
 		{"min-bitrate",      required_argument, 0,  0 },
 		{"max-bitrate",      required_argument, 0, 'b'},
-		{"config-interval",  required_argument, 0, 'c'},
-		{"idr",              required_argument, 0, 'a'},
 		{"msg-rate",         required_argument, 0, 'r'},
 		{ /* Sentinel */ }
 	};
@@ -437,10 +420,6 @@ int main (int argc, char *argv[])
 		" (default: " CURR_BR ")\n"
 		" --min-bitrate,        - Min bitrate cap"
 		" (default: 1)\n"
-		" --config-interval, -c - Interval to send rtp config"
-		" (default: 2s)\n"
-		" --idr              -a - Interval between IDR Frames"
-		" (default: " DEFAULT_IDR_INTERVAL ")\n"
 		" --msg-rate,        -r - Rate of messages displayed"
 		" (default: 5s)\n\n"
 		"Examples:\n"
@@ -522,15 +501,6 @@ int main (int argc, char *argv[])
 
 			info.curr_bitrate = info.max_bitrate;
 			dbg(1, "set max bitrate to: %d\n", info.max_bitrate);
-			break;
-		case 'c': /* config-interval */
-			info.config_interval = atoi(optarg);
-			dbg(1, "set rtsp config interval to: %d\n",
-			    info.config_interval);
-			break;
-		case 'a': /* idr frame interval */
-			info.idr = atoi(optarg);
-			dbg(1, "set idr interval to: %d\n", info.idr);
 			break;
 		case 'r': /* how often to display messages at */
 			info.msg_rate = atoi(optarg);

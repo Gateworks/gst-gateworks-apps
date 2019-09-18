@@ -59,9 +59,6 @@
 /* Default quality 'steps' */
 #define DEFAULT_STEPS "5"
 
-/* max number of chars. in a pipeline */
-#define LAUNCH_MAX 8192
-
 /**
  * imxvpuenc_h264:
  *  - bitrate: Bitrate to use, in kbps
@@ -71,7 +68,6 @@
  *  The encoder driver's controls are exposed via V4L2 controls in the
  *  'extra-controls' property. For CODA960 h264 we use the following:
  *  - video_bitrate: Bitrate to use, in kbps
- *  - 
  */
 #define MIN_BR  "0"	     /* The min value "bitrate" to (0 = VBR)*/
 #define MAX_BR  "4294967295" /* Max as defined by imxvpuenc_h264 */
@@ -92,7 +88,7 @@ struct stream_info {
 	GstRTSPMountPoints *mounts;   /* RTSP Mounts */
 	GstRTSPMediaFactory *factory; /* RTSP Factory */
 	GstRTSPMedia *media;	      /* RTSP Media */
-	GstElement **stream;	      /* Array of elements */
+	GstBin *pipeline;	      /* Array of elements */
 	gboolean connected;	      /* Flag to see if this is in use */
 	gint steps;		      /* Steps to scale quality at */
 	gint min_bitrate;	      /* Min Bitrate */
@@ -118,9 +114,41 @@ void _dbg(const char *func, unsigned int line,
 	}
 }
 
+/*
+ * find_element
+ * finds an element based on the name
+ */
+static gint compare_name(gconstpointer elem, gconstpointer name) {
+
+	const gchar *elem_name = G_OBJECT_TYPE_NAME(g_value_get_object(elem));
+
+	return strstr(g_ascii_strdown(elem_name, -1), (char*) name) ? 0 : 1;
+}
+
+/**
+ * search_pipeline
+ * Searches the pipeline for a given element
+ */
+static GstElement* search_pipeline(GstBin *pipeline, gchar *name) {
+	GstIterator *iter;
+	GValue elem = G_VALUE_INIT;
+	gboolean is_found = FALSE;
+
+	iter = gst_bin_iterate_elements(pipeline);
+	is_found = gst_iterator_find_custom(iter, compare_name, &elem, name);
+	gst_iterator_free(iter);
+
+	if (is_found)
+		return g_value_get_object(&elem);
+
+	return NULL;
+}
+
 static gboolean periodic_msg_handler(struct stream_info *si)
 {
-	const gchar *name = g_ascii_strdown(G_OBJECT_TYPE_NAME(si->stream[encoder]), -1);
+	GstElement *enc = search_pipeline(si->pipeline, "enc");
+	GstElement *pay = search_pipeline(si->pipeline, "pay");
+	const gchar *name = g_ascii_strdown(G_OBJECT_TYPE_NAME(enc), -1);
 	dbg(4, "called\n");
 
 	if (si->connected == FALSE) {
@@ -136,8 +164,7 @@ static gboolean periodic_msg_handler(struct stream_info *si)
 		g_print("Step Factor          : %d\n",
 			(si->max_bitrate - si->min_bitrate) / si->steps);
 
-		g_object_get(G_OBJECT(si->stream[protocol]), "stats", &stats,
-			     NULL);
+		g_object_get(pay, "stats", &stats, NULL);
 		if (stats) {
 			g_print("General RTSP Stats   : %s\n",
 				gst_structure_to_string(stats));
@@ -146,7 +173,7 @@ static gboolean periodic_msg_handler(struct stream_info *si)
 
 		if (strstr(name, "v4l2h264enc") != NULL) {
 			GstStructure *extra_controls;
-			g_object_get(si->stream[encoder], "extra-controls", &extra_controls, NULL);
+			g_object_get(enc, "extra-controls", &extra_controls, NULL);
 			g_print("extra-controls=%s\n", gst_structure_to_string(extra_controls));
 		}
 
@@ -168,16 +195,15 @@ static void setup_encoder(GstElement *enc, const gchar *name,
 {
 	gchar *str;
 	GstStructure *extra_controls;
-	si->stream[encoder] = enc;
 
 	/* setup for specific encoders */
 	if (strstr(name, "imxvpuenc_h264") != NULL) {
 		g_print("Setting encoder bitrate=%d\n", si->curr_bitrate);
-		g_object_set(si->stream[encoder], "bitrate", si->curr_bitrate, NULL);
+		g_object_set(enc, "bitrate", si->curr_bitrate, NULL);
 	}
 	else if (strstr(name, "v4l2h264enc") != NULL) {
 
-		g_object_get(si->stream[encoder], "extra-controls",
+		g_object_get(enc, "extra-controls",
 			     &extra_controls, NULL);
 
 		if (extra_controls == NULL) {
@@ -195,20 +221,10 @@ static void setup_encoder(GstElement *enc, const gchar *name,
 
 		g_print("Setting encoder extra-controls=%s\n",
 		       gst_structure_to_string(extra_controls));
-		g_object_set(si->stream[encoder], "extra-controls",
+		g_object_set(enc, "extra-controls",
 			     extra_controls, NULL);
 		gst_structure_free(extra_controls);
 	}
-}
-
-/**
- * setup_payload
- * Sets up payloads if setup is needed
- */
-static void setup_payload(GstElement *pay, const gchar *name,
-			  struct stream_info *si)
-{
-	si->stream[protocol] = pay;
 }
 
 /**
@@ -216,16 +232,12 @@ static void setup_payload(GstElement *pay, const gchar *name,
  * Called on each element and if necessary hands the element off
  * to be configured
  */
-static void setup_elements(const GValue * item, gpointer user_data)
+static void setup_elements(struct stream_info *si)
 {
-	GstElement *elem = g_value_get_object(item);
-	const gchar *name = g_ascii_strdown(G_OBJECT_TYPE_NAME(elem), -1);
+	GstElement *elem = NULL;
 
-	/* call appropriate setup function */
-	if (strstr(name, "enc") != NULL)
-		setup_encoder(elem, name, user_data);
-	else if (strstr(name, "pay") != NULL)
-		setup_payload(elem, name, user_data);
+	if ((elem = search_pipeline(si->pipeline, "enc")) != NULL)
+		setup_encoder(elem, G_OBJECT_TYPE_NAME(elem), si);
 }
 
 /**
@@ -235,20 +247,14 @@ static void setup_elements(const GValue * item, gpointer user_data)
 static void media_configure_handler(GstRTSPMediaFactory *factory,
 				    GstRTSPMedia *media, struct stream_info *si)
 {
-	GstIterator *iter;
-
 	dbg(4, "called\n");
 
 	si->media = media;
 
 	g_print("[%d]Configuring pipeline...\n", si->num_cli);
 
-	si->stream[pipeline] = gst_rtsp_media_get_element(media);
-
-	/* Iterate through pipeline and setup elements*/
-	iter = gst_bin_iterate_elements(GST_BIN(si->stream[pipeline]));
-	gst_iterator_foreach(iter, setup_elements, si);
-	gst_iterator_free(iter);
+	si->pipeline = GST_BIN(gst_rtsp_media_get_element(media));
+	setup_elements(si);
 
 	if (si->num_cli == 1) {
 		/* Create Msg Event Handler */
@@ -256,10 +262,6 @@ static void media_configure_handler(GstRTSPMediaFactory *factory,
 		g_timeout_add(si->msg_rate * 1000,
 			      (GSourceFunc)periodic_msg_handler, si);
 	}
-
-	printf("%s: encoder=%s, payload=%s\n", __func__,
-	       G_OBJECT_TYPE_NAME(si->stream[encoder]),
-	       G_OBJECT_TYPE_NAME(si->stream[protocol]));
 }
 
 /**
@@ -272,7 +274,8 @@ static void change_bitrate(struct stream_info *si)
 
 	int c = si->curr_bitrate;
 	int step = (si->max_bitrate - si->min_bitrate) / si->steps;
-	const gchar *name = g_ascii_strdown(G_OBJECT_TYPE_NAME(si->stream[encoder]), -1);
+	GstElement *elem = search_pipeline(si->pipeline, "enc");
+	const gchar *name = g_ascii_strdown(G_OBJECT_TYPE_NAME(elem), -1);
 	GstStructure *extra_controls;
 
 	/* Change bitrate based on # of clients * step factor */
@@ -288,15 +291,15 @@ static void change_bitrate(struct stream_info *si)
 		g_print("[%d]Changing bitrate from %d to %d\n", si->num_cli, c,
 			si->curr_bitrate);
 		if (strstr(name, "imxvpuenc_h264") != NULL) {
-			g_object_set(si->stream[encoder], "bitrate",
+			g_object_set(elem, "bitrate",
 				     si->curr_bitrate, NULL);
 		}
 		else if (strstr(name, "v4l2h264enc") != NULL) {
-			g_object_get(si->stream[encoder], "extra-controls",
+			g_object_get(elem, "extra-controls",
 				     &extra_controls, NULL);
 			gst_structure_set(extra_controls, "video_bitrate",
 					  G_TYPE_INT, si->curr_bitrate, NULL);
-			g_object_set(si->stream[encoder], "extra-controls",
+			g_object_set(elem, "extra-controls",
 				     extra_controls, NULL);
 			gst_structure_free(extra_controls);
 		}
@@ -319,8 +322,6 @@ static void client_close_handler(GstRTSPClient *client, struct stream_info *si)
 		dbg(3, "Connection terminated\n");
 		si->connected = FALSE;
 
-		/* Created when first new client connected */
-		free(si->stream);
 	} else {
 		change_bitrate(si);
 	}
@@ -344,8 +345,6 @@ static void new_client_handler(GstRTSPServer *server, GstRTSPClient *client,
 
 	/* Create media-configure handler */
 	if (si->num_cli == 1) {	/* Initial Setup */
-		/* Free if no more clients (in close handler) */
-		si->stream = malloc(sizeof(GstElement *) * NUM_ELEM);
 
 		/**
 		 * Stream info is required, which is only
@@ -387,8 +386,6 @@ int main (int argc, char *argv[])
 	char *port = (char *) DEFAULT_PORT;
 	char *mount_point = (char *) DEFAULT_MOUNT_POINT;
 	char *user_pipeline = NULL;
-	/* Launch pipeline shouldn't exceed LAUNCH_MAX bytes of characters */
-	char launch[LAUNCH_MAX];
 
 	/* User Arguments */
 	const struct option long_opts[] = {
@@ -554,9 +551,8 @@ int main (int argc, char *argv[])
 	gst_rtsp_media_factory_set_shared(info.factory, TRUE);
 
 	/* Source Pipeline */
-	snprintf(launch, LAUNCH_MAX, "( %s )", user_pipeline);
-	g_print("Pipeline set to: %s...\n", launch);
-	gst_rtsp_media_factory_set_launch(info.factory, launch);
+	g_print("Pipeline set to: %s\n", user_pipeline);
+	gst_rtsp_media_factory_set_launch(info.factory, user_pipeline);
 
 	/* Connect pipeline to the mount point (URI) */
 	gst_rtsp_mount_points_add_factory(info.mounts, mount_point,
